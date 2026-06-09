@@ -4,15 +4,20 @@ export interface AiAnalysisResponse {
 }
 
 export function getAiAnalysisGate(): AiAnalysisResponse {
-  if (process.env.ENABLE_AI_ANALYSIS !== "true") {
+  if (
+    process.env.NEXT_PUBLIC_ENABLE_OPENAI_CHAT !== "true" &&
+    process.env.NEXT_PUBLIC_ENABLE_AI_ANALYSIS !== "true" &&
+    process.env.ENABLE_OPENAI_CHAT !== "true" &&
+    process.env.ENABLE_AI_ANALYSIS !== "true"
+  ) {
     return {
       status: "disabled",
-      message: "AI analysis is disabled by default."
+      message: "OpenAI chat is disabled by default."
     };
   }
 
   return {
     status: "placeholder",
-    message: "AI analysis is enabled, but v0 does not call OpenAI automatically."
+    message: "OpenAI chat is enabled, but this endpoint is only a placeholder."
   };
 }

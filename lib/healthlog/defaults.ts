@@ -57,14 +57,30 @@ export const FOOD_DEFAULTS: FoodDefault[] = [
 ];
 
 export const DEFAULT_PLAN: PlanSettings = {
+  targetDate: "2026-06-30",
+  dailyUseKcal: 2200,
   dailyProteinTargetG: 120,
+  dailyProteinMaxG: 150,
   dailyCalorieTargetKcal: 2200,
   sleepTargetHours: 7.5,
   supplementSchedule: ["Vitamin D", "Magnesium"],
+  activities: ["bike", "shadow boxing", "pull up", "push up", "squat"],
+  startWeightKg: 75,
+  bodyFatPercent: 27,
+  age: 32,
+  heightCm: 166,
+  goal: "ลด fat ให้เยอะที่สุดและ maintain กล้ามเนื้อเท่าที่ทำได้",
   timezone: "Asia/Bangkok"
 };
 
 export const DEFAULT_STATE: HealthLogState = {
   plan: DEFAULT_PLAN,
-  logs: []
+  logs: [],
+  messages: [],
+  ai: {
+    active: false,
+    summarizeEnabled: false,
+    cooldownMinutes: 30,
+    unreadAssistantCount: 0
+  }
 };

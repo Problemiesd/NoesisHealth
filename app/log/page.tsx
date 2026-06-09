@@ -1,5 +1,5 @@
-import { LogWorkspace } from "@/components/LogWorkspace";
+import { redirect } from "next/navigation";
 
 export default function LogPage() {
-  return <LogWorkspace />;
+  redirect("/");
 }

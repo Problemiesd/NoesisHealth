@@ -3,7 +3,7 @@ import { parseQuickLog } from "@/lib/healthlog/parser";
 import type { HealthLogState, PlanSettings } from "@/lib/healthlog/types";
 import { createIsoNow } from "@/lib/healthlog/time";
 
-const STORAGE_KEY = "noesis-healthlog-state-v1";
+const STORAGE_KEY = "noesis-healthlog-state-v2";
 
 function canUseLocalStorage(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
@@ -23,7 +23,9 @@ export function readState(): HealthLogState {
     const parsed = JSON.parse(raw) as Partial<HealthLogState>;
     return {
       plan: { ...DEFAULT_STATE.plan, ...parsed.plan } as PlanSettings,
-      logs: Array.isArray(parsed.logs) ? parsed.logs : []
+      logs: Array.isArray(parsed.logs) ? parsed.logs : [],
+      messages: Array.isArray(parsed.messages) ? parsed.messages : [],
+      ai: { ...DEFAULT_STATE.ai, ...parsed.ai }
     };
   } catch {
     return DEFAULT_STATE;

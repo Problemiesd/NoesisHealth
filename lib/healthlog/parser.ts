@@ -18,11 +18,9 @@ function detectFood(text: string): FoodHit | null {
 
 function extractQuantity(text: string, unitHints: string[]): number | null {
   const units = unitHints.join("|");
-  const pattern = new RegExp(
-    `(?:(\\d+(?:\\.\\d+)?)\\s*(?:${units})\\b|\\b(?:${units})\\s*(\\d+(?:\\.\\d+)?))`,
-    "i"
-  );
-  const match = text.match(pattern);
+  const forwardPattern = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:${units})`, "i");
+  const reversePattern = new RegExp(`(?:${units})\\s*(\\d+(?:\\.\\d+)?)`, "i");
+  const match = text.match(forwardPattern) ?? text.match(reversePattern);
   if (!match) {
     return null;
   }
@@ -30,7 +28,7 @@ function extractQuantity(text: string, unitHints: string[]): number | null {
 }
 
 function hasFoodCue(text: string): boolean {
-  return /(^|\s)(กิน|eat|food|meal|มื้อ|ของกิน)(\s|$)/i.test(text);
+  return /(กิน|eat|food|meal|มื้อ|ของกิน)/i.test(text);
 }
 
 function createIncompleteFoodEntry(

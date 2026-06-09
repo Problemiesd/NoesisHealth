@@ -1,5 +1,5 @@
 import { ChatWorkspace } from "@/components/ChatWorkspace";
 
-export default function HomePage() {
+export default function ChatPage() {
   return <ChatWorkspace />;
 }

@@ -1,9 +1,10 @@
 # Decisions
 
-- Rule-based first: parsing and advice are deterministic in v0.
-- OpenAI API is optional and disabled by default.
+- Chat-first: the app opens to a single chat surface.
+- Rule-based first: parsing and log capture stay deterministic in v1.
+- OpenAI chat is optional and disabled by default.
 - No hallucination policy: missing food quantities stay incomplete.
 - Do not calculate food nutrition when quantity or food reference is missing.
-- Local storage is acceptable for v0 UI state until Supabase wiring is added.
-- Simple CSS is preferred over adding Tailwind when the repo does not already use it.
-- Timezone defaults to `Asia/Bangkok`.
+- `AI_PLAN.md` is the source of truth for AI behavior.
+- Summary is optional and off by default.
+- Local storage is acceptable for v1 UI state until Supabase wiring is added.

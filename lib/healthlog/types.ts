@@ -38,16 +38,46 @@ export interface LogEntry {
 }
 
 export interface PlanSettings {
+  targetDate: string;
+  dailyUseKcal: number;
   dailyProteinTargetG: number;
+  dailyProteinMaxG: number;
   dailyCalorieTargetKcal: number;
   sleepTargetHours: number;
   supplementSchedule: string[];
+  activities: string[];
+  startWeightKg: number;
+  bodyFatPercent: number;
+  age: number;
+  heightCm: number;
+  goal: string;
   timezone: string;
+}
+
+export type ChatRole = "user" | "assistant" | "system";
+
+export interface ChatMessage {
+  id: string;
+  role: ChatRole;
+  content: string;
+  createdAt: string;
+  kind: "chat" | "log" | "clarification" | "summary" | "system";
+}
+
+export interface AiControlState {
+  active: boolean;
+  summarizeEnabled: boolean;
+  cooldownMinutes: number;
+  lastAssistantAt?: string;
+  lastReadAt?: string;
+  unreadAssistantCount: number;
 }
 
 export interface HealthLogState {
   plan: PlanSettings;
   logs: LogEntry[];
+  messages: ChatMessage[];
+  ai: AiControlState;
 }
 
 export interface Advice {

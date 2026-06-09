@@ -1,5 +1,5 @@
-import { DashboardWorkspace } from "@/components/DashboardWorkspace";
+import { redirect } from "next/navigation";
 
 export default function DashboardPage() {
-  return <DashboardWorkspace />;
+  redirect("/");
 }

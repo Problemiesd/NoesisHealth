@@ -2,23 +2,24 @@
 
 ## Completed
 
-- Scaffolded a Next.js + TypeScript app structure
+- Built a chat-first Next.js + TypeScript app scaffold
 - Added deterministic parser for food, sleep, supplement, weight, exercise, note, and unknown logs
-- Added rule-based daily summary logic
-- Added local storage state handling for the v0 UI
-- Added dashboard, quick log, and settings screens
-- Added placeholder AI analysis route gated by a feature flag
+- Added local storage state handling for logs, chat history, and AI controls
+- Added a single chat surface on `/`
+- Added OpenAI chat route gated by feature flags and API key
+- Added `AI_PLAN.md` as the source plan for AI behavior
+- Added tests for parser behavior and AI cooldown gating
 - Added Supabase schema file
-- Added tests for parser and summary behavior
 - Added project documentation files
 
 ## Next
 
 - Wire Supabase reads/writes behind a repository layer
 - Add login and per-user isolation
-- Persist daily summaries from the backend instead of only local storage
+- Persist chat and logs to the backend instead of only local storage
 - Expand the food reference table carefully
 - Add more parser cases from real user logs
+- Add optional summarize flow if you want better AI summaries later
 
 ## Not in scope
 
