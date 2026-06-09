@@ -71,6 +71,22 @@ export function markAiReplySent(ai: AiControlState, now = new Date()): AiControl
   };
 }
 
+export function markAiProactiveSent(ai: AiControlState, now = new Date()): AiControlState {
+  return {
+    ...ai,
+    lastAssistantAt: now.toISOString(),
+    lastProactiveAt: now.toISOString(),
+    unreadAssistantCount: ai.unreadAssistantCount + 1
+  };
+}
+
+export function markAiUserAction(ai: AiControlState, now = new Date()): AiControlState {
+  return {
+    ...ai,
+    lastUserActionAt: now.toISOString()
+  };
+}
+
 export function addChatMessage(
   state: HealthLogState,
   message: ChatMessage

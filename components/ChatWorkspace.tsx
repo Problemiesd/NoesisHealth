@@ -6,7 +6,9 @@ import {
   createChatMessage,
   isOpenAiChatEnabled,
   markAiReplyRead,
-  markAiReplySent
+  markAiProactiveSent,
+  markAiReplySent,
+  markAiUserAction
 } from "@/lib/healthlog/chat";
 import { getOrCreateDeviceId } from "@/lib/healthlog/device";
 import { DEFAULT_STATE } from "@/lib/healthlog/defaults";
@@ -91,10 +93,15 @@ export function ChatWorkspace() {
   );
   const deviceIdRef = useRef<string | null>(null);
   const lastSavedJsonRef = useRef<string>("");
+  const proactiveInFlightRef = useRef(false);
 
   if (deviceIdRef.current === null) {
     deviceIdRef.current = getOrCreateDeviceId();
   }
+
+  const aiReady = isOpenAiChatEnabled();
+  const aiAllowance = canSendAiReply(state.ai, new Date());
+  const messages = useMemo(() => [...state.messages].sort((a, b) => a.createdAt.localeCompare(b.createdAt)), [state.messages]);
 
   useEffect(() => {
     writeState(state);
@@ -174,7 +181,61 @@ export function ChatWorkspace() {
   }, [hydrated, state]);
 
   useEffect(() => {
-    function markPageRead() {
+    if (document.visibilityState !== "visible" || state.ai.unreadAssistantCount === 0) {
+      return;
+    }
+
+    updateState((current) => ({
+      ...current,
+      ai: markAiReplyRead(current.ai)
+    }));
+  }, [state.ai.unreadAssistantCount, state.messages.length]);
+
+  useEffect(() => {
+    if (!hydrated || !state.ai.active || state.ai.lastUserActionAt || !aiReady) {
+      return;
+    }
+
+    updateState((current) => ({
+      ...current,
+      ai: markAiUserAction(current.ai)
+    }));
+  }, [aiReady, hydrated, state.ai.active, state.ai.lastUserActionAt]);
+
+  useEffect(() => {
+    if (!hydrated || !aiReady || !state.ai.active || busy || proactiveInFlightRef.current) {
+      return;
+    }
+
+    if (!state.ai.lastUserActionAt) {
+      return;
+    }
+
+    if (state.ai.lastProactiveAt && state.ai.lastProactiveAt >= state.ai.lastUserActionAt) {
+      return;
+    }
+
+    proactiveInFlightRef.current = true;
+    void sendProactiveCoachCheckIn()
+      .finally(() => {
+        proactiveInFlightRef.current = false;
+      });
+  }, [
+    aiReady,
+    busy,
+    hydrated,
+    state.ai.active,
+    state.ai.lastProactiveAt,
+    state.ai.lastUserActionAt,
+    state.logs.length
+  ]);
+
+  useEffect(() => {
+    function syncReadState() {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
       updateState((current) => {
         if (current.ai.unreadAssistantCount === 0) {
           return current;
@@ -187,19 +248,15 @@ export function ChatWorkspace() {
       });
     }
 
-    markPageRead();
-    window.addEventListener("focus", markPageRead);
-    document.addEventListener("visibilitychange", markPageRead);
+    syncReadState();
+    window.addEventListener("focus", syncReadState);
+    document.addEventListener("visibilitychange", syncReadState);
 
     return () => {
-      window.removeEventListener("focus", markPageRead);
-      document.removeEventListener("visibilitychange", markPageRead);
+      window.removeEventListener("focus", syncReadState);
+      document.removeEventListener("visibilitychange", syncReadState);
     };
   }, []);
-
-  const aiReady = isOpenAiChatEnabled();
-  const aiAllowance = canSendAiReply(state.ai, new Date());
-  const messages = useMemo(() => [...state.messages].sort((a, b) => a.createdAt.localeCompare(b.createdAt)), [state.messages]);
 
   function updateState(next: HealthLogState | ((current: HealthLogState) => HealthLogState)) {
     setState((current) => (typeof next === "function" ? next(current) : next));
@@ -210,7 +267,8 @@ export function ChatWorkspace() {
       ...current,
       ai: {
         ...current.ai,
-        active
+        active,
+        lastUserActionAt: active ? new Date().toISOString() : current.ai.lastUserActionAt
       }
     }));
     setStatus(active ? "AI is active." : "AI is off by default.");
@@ -275,6 +333,51 @@ export function ChatWorkspace() {
     }
   }
 
+  async function sendProactiveCoachCheckIn() {
+    setBusy(true);
+    setStatus("Coach check-in...");
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          mode: "coach",
+          active: state.ai.active,
+          messages: buildOpenAiMessages([
+            ...state.messages,
+            createChatMessage(
+              "user",
+              "Generate a proactive coaching check-in. Focus on the single best next action the user should take right now to move toward the goal. Do not greet. Do not ask what the user wants to log. Be direct and useful.",
+              "summary"
+            )
+          ]),
+          state
+        })
+      });
+
+      const payload = (await response.json()) as { status: string; message?: string; detail?: string };
+      const replyText = payload.message;
+      if (!response.ok || payload.status !== "ok" || !replyText) {
+        throw new Error(payload.detail || replyText || "Coach request failed.");
+      }
+
+      const now = new Date();
+      updateState((current) => ({
+        ...current,
+        messages: [...current.messages, createChatMessage("assistant", replyText, "summary", now.toISOString())],
+        ai: markAiProactiveSent(current.ai, now)
+      }));
+      setStatus("Coach check-in sent.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Coach check-in failed.";
+      setStatus(message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleSendMessage(mode: "chat" | "summary" = "chat") {
     const trimmed = input.trim();
     if (mode === "chat" && !trimmed) {
@@ -294,7 +397,8 @@ export function ChatWorkspace() {
           ...current.messages,
           userMessage,
           createChatMessage("assistant", logAcknowledgement(parsedLog), parsedLog.status === "complete" ? "log" : "clarification", now.toISOString())
-        ]
+        ],
+        ai: markAiUserAction(current.ai, now)
       }));
       setInput("");
       setStatus(parsedLog.status === "complete" ? "Log saved locally." : "Need clarification before calculating.");

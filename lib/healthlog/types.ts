@@ -70,6 +70,8 @@ export interface AiControlState {
   cooldownMinutes: number;
   lastAssistantAt?: string;
   lastReadAt?: string;
+  lastProactiveAt?: string;
+  lastUserActionAt?: string;
   unreadAssistantCount: number;
 }
 

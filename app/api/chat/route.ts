@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { buildSystemPrompt, readAiPlanDocument } from "@/lib/healthlog/ai-plan";
+import { buildSystemPrompt, readAiCoachDocument, readAiPlanDocument } from "@/lib/healthlog/ai-plan";
 import { DEFAULT_STATE } from "@/lib/healthlog/defaults";
 import { isOpenAiChatEnabled } from "@/lib/healthlog/chat";
 import type { HealthLogState } from "@/lib/healthlog/types";
 
 type ChatRequest = {
-  mode?: "chat" | "summary";
+  mode?: "chat" | "summary" | "coach";
   active?: boolean;
   messages?: Array<{ role: "user" | "assistant" | "system"; content: string }>;
   state?: HealthLogState;
@@ -30,7 +30,8 @@ export async function POST(request: Request) {
   }
 
   const planDocument = await readAiPlanDocument();
-  const systemPrompt = buildSystemPrompt(planDocument, body.state ?? DEFAULT_STATE, body.mode ?? "chat");
+  const coachDocument = await readAiCoachDocument();
+  const systemPrompt = buildSystemPrompt(planDocument, coachDocument, body.state ?? DEFAULT_STATE, body.mode ?? "chat");
   const model = process.env.OPENAI_CHAT_MODEL ?? "gpt-4.1-mini";
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
