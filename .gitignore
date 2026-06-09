@@ -8,6 +8,7 @@ out/
 # test/build output
 coverage/
 dist/
+*.tsbuildinfo
 
 # environment files
 .env.local

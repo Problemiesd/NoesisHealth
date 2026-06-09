@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { buildDashboardSnapshot } from "@/lib/healthlog/summary";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   canSendAiReply,
   createChatMessage,
@@ -9,8 +8,10 @@ import {
   markAiReplyRead,
   markAiReplySent
 } from "@/lib/healthlog/chat";
+import { getOrCreateDeviceId } from "@/lib/healthlog/device";
 import { DEFAULT_STATE } from "@/lib/healthlog/defaults";
 import { parseQuickLog } from "@/lib/healthlog/parser";
+import { loadRemoteState, saveRemoteState } from "@/lib/healthlog/remote-state";
 import { readState, writeState } from "@/lib/healthlog/store";
 import { formatShortDateTime } from "@/lib/healthlog/time";
 import type { ChatMessage, HealthLogState, LogEntry } from "@/lib/healthlog/types";
@@ -35,9 +36,11 @@ function isLogLike(entry: LogEntry, rawText: string): boolean {
   if (entry.category === "food" || entry.category === "sleep" || entry.category === "supplement" || entry.category === "weight" || entry.category === "exercise") {
     return true;
   }
+
   if (entry.category === "note" || entry.category === "unknown") {
     return !isQuestionLike(rawText);
   }
+
   return false;
 }
 
@@ -68,17 +71,6 @@ function logAcknowledgement(entry: LogEntry): string {
   }
 }
 
-function buildSummaryText(state: HealthLogState): string {
-  const snapshot = buildDashboardSnapshot(state, new Date());
-  return [
-    `สรุปวันนี้: ${snapshot.totalCalories.value} kcal, โปรตีน ${snapshot.totalProteinG.value} g, นอน ${snapshot.sleepHours.value} ชั่วโมง.`,
-    snapshot.nextActionSuggestion ? `ข้อแนะนำ: ${snapshot.nextActionSuggestion.message}` : "",
-    snapshot.incompleteLogs.length > 0 ? `ยังมี log ที่ incomplete ${snapshot.incompleteLogs.length} รายการ.` : ""
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
 function buildOpenAiMessages(messages: ChatMessage[]) {
   return messages
     .filter((message) => message.role === "user" || message.role === "assistant")
@@ -93,19 +85,121 @@ export function ChatWorkspace() {
   const [state, setState] = useState<HealthLogState>(() => getInitialState());
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
   const [status, setStatus] = useState<string>(() =>
     state.ai.active ? "AI is active." : "AI is off by default."
   );
+  const deviceIdRef = useRef<string | null>(null);
+  const lastSavedJsonRef = useRef<string>("");
+
+  if (deviceIdRef.current === null) {
+    deviceIdRef.current = getOrCreateDeviceId();
+  }
 
   useEffect(() => {
     writeState(state);
   }, [state]);
 
-  const orderedLogs = useMemo(() => sortLogsDescending(state.logs), [state.logs]);
-  const messages = useMemo(() => [...state.messages].sort((a, b) => a.createdAt.localeCompare(b.createdAt)), [state.messages]);
-  const snapshot = useMemo(() => buildDashboardSnapshot(state), [state]);
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateRemoteState() {
+      const deviceId = deviceIdRef.current;
+      if (!deviceId) {
+        setHydrated(true);
+        return;
+      }
+
+      try {
+        const remoteState = await loadRemoteState(deviceId);
+        if (cancelled) {
+          return;
+        }
+
+        if (remoteState) {
+          setState(remoteState);
+          writeState(remoteState);
+          lastSavedJsonRef.current = JSON.stringify(remoteState);
+          setStatus("Loaded from Supabase.");
+        } else {
+          setStatus("Supabase is ready.");
+        }
+      } catch {
+        if (!cancelled) {
+          setStatus("Using local cache.");
+        }
+      } finally {
+        if (!cancelled) {
+          setHydrated(true);
+        }
+      }
+    }
+
+    void hydrateRemoteState();
+
+    return () => {
+      cancelled = true;
+    };
+    // Hydrate once on mount.
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) {
+      return;
+    }
+
+    const deviceId = deviceIdRef.current;
+    if (!deviceId) {
+      return;
+    }
+
+    const serialized = JSON.stringify(state);
+    if (serialized === lastSavedJsonRef.current) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void saveRemoteState(deviceId, state)
+        .then(() => {
+          lastSavedJsonRef.current = serialized;
+        })
+        .catch(() => {
+          setStatus("Saved locally. Supabase sync failed.");
+        });
+    }, 150);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [hydrated, state]);
+
+  useEffect(() => {
+    function markPageRead() {
+      updateState((current) => {
+        if (current.ai.unreadAssistantCount === 0) {
+          return current;
+        }
+
+        return {
+          ...current,
+          ai: markAiReplyRead(current.ai)
+        };
+      });
+    }
+
+    markPageRead();
+    window.addEventListener("focus", markPageRead);
+    document.addEventListener("visibilitychange", markPageRead);
+
+    return () => {
+      window.removeEventListener("focus", markPageRead);
+      document.removeEventListener("visibilitychange", markPageRead);
+    };
+  }, []);
+
   const aiReady = isOpenAiChatEnabled();
   const aiAllowance = canSendAiReply(state.ai, new Date());
+  const messages = useMemo(() => [...state.messages].sort((a, b) => a.createdAt.localeCompare(b.createdAt)), [state.messages]);
 
   function updateState(next: HealthLogState | ((current: HealthLogState) => HealthLogState)) {
     setState((current) => (typeof next === "function" ? next(current) : next));
@@ -120,25 +214,6 @@ export function ChatWorkspace() {
       }
     }));
     setStatus(active ? "AI is active." : "AI is off by default.");
-  }
-
-  function toggleSummarizeEnabled(active: boolean) {
-    updateState((current) => ({
-      ...current,
-      ai: {
-        ...current.ai,
-        summarizeEnabled: active
-      }
-    }));
-    setStatus(active ? "Summarize is enabled." : "Summarize is off.");
-  }
-
-  function markRead() {
-    updateState((current) => ({
-      ...current,
-      ai: markAiReplyRead(current.ai)
-    }));
-    setStatus("Marked AI reply as read.");
   }
 
   function resetDemoData() {
@@ -207,50 +282,14 @@ export function ChatWorkspace() {
     }
 
     const now = new Date();
-    if (mode === "summary") {
-      if (!state.ai.summarizeEnabled) {
-        const summaryText = buildSummaryText(state);
-        updateState((current) => ({
-          ...current,
-          messages: [...current.messages, createChatMessage("assistant", summaryText, "summary", now.toISOString())]
-        }));
-        setStatus("Summary generated locally.");
-        return;
-      }
-
-      if (!aiReady || !state.ai.active) {
-        setStatus("OpenAI is not enabled.");
-        return;
-      }
-
-      if (!aiAllowance.allowed) {
-        updateState((current) => ({
-          ...current,
-          messages: [
-            ...current.messages,
-            createChatMessage("assistant", aiAllowance.reason ?? "AI cooldown is active.", "clarification", now.toISOString())
-          ]
-        }));
-        setStatus(aiAllowance.reason ?? "AI cooldown is active.");
-        return;
-      }
-
-      await sendToOpenAi("summary", "Please summarize the current chat and today's logged health data in Thai.");
-      return;
-    }
-
     const userMessage = createChatMessage("user", trimmed, "chat", now.toISOString());
     const parsedLog = parseQuickLog(trimmed, now.toISOString());
     const logLike = isLogLike(parsedLog, trimmed);
 
     if (logLike) {
-      const nextLogs = parsedLog.status === "complete"
-        ? sortLogsDescending([parsedLog, ...state.logs])
-        : sortLogsDescending([parsedLog, ...state.logs]);
-
       updateState((current) => ({
         ...current,
-        logs: nextLogs,
+        logs: sortLogsDescending([parsedLog, ...current.logs]),
         messages: [
           ...current.messages,
           userMessage,
@@ -301,168 +340,61 @@ export function ChatWorkspace() {
 
   return (
     <section className="chat-shell">
-      <div className="grid grid-2">
-        <div className="card chat-panel">
-          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <h2>Chat</h2>
-              <p className="muted">พิมพ์ถามตอบ หรือพิมพ์ log สั้น ๆ ได้เลย</p>
-            </div>
-            <div className="row">
-              <label className="pill">
-                <input
-                  type="checkbox"
-                  checked={state.ai.active}
-                  onChange={(event) => toggleAiActive(event.target.checked)}
-                />
-                AI active
-              </label>
-              <label className="pill">
-                <input
-                  type="checkbox"
-                  checked={state.ai.summarizeEnabled}
-                  onChange={(event) => toggleSummarizeEnabled(event.target.checked)}
-                />
-                Summarize optional
-              </label>
-            </div>
+      <div className="chat-card">
+        <header className="chat-header">
+          <div className="chat-title">
+            <p className="eyebrow">NoesisHealth</p>
           </div>
+          <div className="chat-controls">
+            <label className="chip">
+              <input
+                type="checkbox"
+                checked={state.ai.active}
+                onChange={(event) => toggleAiActive(event.target.checked)}
+              />
+              AI active
+            </label>
+            <button className="button secondary" type="button" onClick={resetDemoData}>
+              Reset
+            </button>
+          </div>
+        </header>
 
-          <div className="chat-window">
-            {messages.length === 0 ? (
-              <div className="banner">
-                <strong>Start here</strong>
-                <p className="muted">
-                  ตัวอย่าง: "กินไข่ 3 ฟอง", "นอน 04:00-11:00", "วันนี้โปรตีนเหลือเท่าไร?"
-                </p>
+        <div className="chat-feed">
+          {messages.map((message) => (
+            <article key={message.id} className={`chat-bubble ${message.role === "user" ? "user" : "ai"}`}>
+              <div className="bubble-head">
+                <strong>{message.role === "user" ? "You" : "AI"}</strong>
+                <span className="small muted">{formatShortDateTime(message.createdAt, state.plan.timezone)}</span>
               </div>
-            ) : (
-              messages.map((message) => (
-                <div key={message.id} className={`chat-bubble ${message.role}`}>
-                  <div className="row" style={{ justifyContent: "space-between" }}>
-                    <strong>{message.role}</strong>
-                    <span className="small muted">{formatShortDateTime(message.createdAt, state.plan.timezone)}</span>
-                  </div>
-                  <p>{message.content}</p>
-                </div>
-              ))
-            )}
-          </div>
-
-          <form
-            className="entry-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void handleSendMessage("chat");
-            }}
-          >
-            <textarea
-              className="textarea"
-              placeholder="พิมพ์ข้อความหรือ log..."
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-            />
-            <div className="row">
-              <button className="button" type="submit" disabled={busy}>
-                Send
-              </button>
-              <button
-                className="button secondary"
-                type="button"
-                disabled={busy}
-                onClick={() => void handleSendMessage("summary")}
-              >
-                Summarize
-              </button>
-              <button className="button secondary" type="button" onClick={markRead}>
-                Mark read
-              </button>
-              <button className="button secondary" type="button" onClick={resetDemoData}>
-                Reset demo
-              </button>
-            </div>
-          </form>
-
-          <p className="helper">{status}</p>
-          <p className="helper">
-            OpenAI available on server: {aiReady ? "yes" : "no"} | Cooldown: {state.ai.cooldownMinutes} minutes
-          </p>
+              <p>{message.content}</p>
+            </article>
+          ))}
         </div>
 
-        <div className="stack">
-          <div className="card">
-            <h3>Plan snapshot</h3>
-            <div className="list">
-              <div className="list-item">
-                <strong>Goal</strong>
-                <p>{state.plan.goal}</p>
-              </div>
-              <div className="list-item">
-                <strong>Window</strong>
-                <p>Until {state.plan.targetDate}</p>
-              </div>
-              <div className="list-item">
-                <strong>Nutrition</strong>
-                <p>
-                  Daily use {state.plan.dailyUseKcal} kcal | protein {state.plan.dailyProteinTargetG}-
-                  {state.plan.dailyProteinMaxG} g
-                </p>
-              </div>
-              <div className="list-item">
-                <strong>Activities</strong>
-                <p>{state.plan.activities.join(", ")}</p>
-              </div>
-            </div>
+        <form
+          className="composer"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleSendMessage("chat");
+          }}
+        >
+          <textarea
+            className="textarea"
+            placeholder="Type here..."
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+          />
+          <div className="composer-actions">
+            <button className="button" type="submit" disabled={busy}>
+              Send
+            </button>
           </div>
+        </form>
 
-          <div className="card">
-            <h3>Today's totals</h3>
-            <div className="grid grid-2">
-              <div className="metric">
-                <span className="metric-value">{snapshot.totalCalories.value}</span>
-                <span className="metric-label">kcal logged</span>
-              </div>
-              <div className="metric">
-                <span className="metric-value">{snapshot.totalProteinG.value}</span>
-                <span className="metric-label">protein g logged</span>
-              </div>
-            </div>
-            <p className="helper">Incomplete food logs are excluded from totals.</p>
-            <p className="helper">
-              Remaining protein to minimum: {Math.max(0, state.plan.dailyProteinTargetG - snapshot.totalProteinG.value)} g
-            </p>
-          </div>
-
-          <div className="card">
-            <h3>Recent logs</h3>
-            <div className="list">
-              {orderedLogs.length === 0 ? (
-                <p className="muted">No logs yet.</p>
-              ) : (
-                orderedLogs.slice(0, 8).map((log) => (
-                  <div key={log.id} className="list-item">
-                    <div className="row" style={{ justifyContent: "space-between" }}>
-                      <strong>{log.category.toUpperCase()}</strong>
-                      <span className={`pill ${log.status === "incomplete" ? "status-warning" : ""}`}>
-                        {log.status}
-                      </span>
-                    </div>
-                    <p>{log.rawText}</p>
-                    {log.clarificationQuestion ? <p className="small status-warning">{log.clarificationQuestion}</p> : null}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="card">
-            <h3>OpenAI plan file</h3>
-            <p className="muted">
-              `AI_PLAN.md` is the source file the server uses for the system prompt. Update that file
-              when you want to change AI behavior.
-            </p>
-          </div>
-        </div>
+        <footer className="chat-footer">
+          <span className="helper">{status}</span>
+        </footer>
       </div>
     </section>
   );

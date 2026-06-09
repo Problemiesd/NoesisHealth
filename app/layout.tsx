@@ -14,21 +14,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <div className="app-shell">
-          <header className="topbar">
-            <div>
-              <p className="eyebrow">NoesisHealth</p>
-              <h1>Chat-first health logging</h1>
-              <p className="subtle">
-                Logs are deterministic. OpenAI only runs when you turn it on.
-              </p>
-              <p className="subtle small">
-                AI plan file: <strong>AI_PLAN.md</strong>
-              </p>
-            </div>
-          </header>
-          <main className="main">{children}</main>
-        </div>
+        {children}
       </body>
     </html>
   );

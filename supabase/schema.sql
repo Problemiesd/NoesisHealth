@@ -161,3 +161,27 @@ select
       and l.status = 'incomplete'
   ) as incomplete_log_count
 from days d;
+
+create table if not exists health_app_states (
+  device_id text primary key,
+  state jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create or replace function touch_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists health_app_states_touch_updated_at on health_app_states;
+
+create trigger health_app_states_touch_updated_at
+before update on health_app_states
+for each row
+execute function touch_updated_at();
