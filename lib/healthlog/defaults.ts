@@ -81,8 +81,6 @@ export const DEFAULT_STATE: HealthLogState = {
     active: false,
     summarizeEnabled: false,
     cooldownMinutes: 30,
-    lastProactiveAt: undefined,
-    lastUserActionAt: undefined,
     unreadAssistantCount: 0
   }
 };

@@ -6,16 +6,13 @@ import {
   createChatMessage,
   isOpenAiChatEnabled,
   markAiReplyRead,
-  markAiProactiveSent,
-  markAiReplySent,
-  markAiUserAction
+  markAiReplySent
 } from "@/lib/healthlog/chat";
 import { getOrCreateDeviceId } from "@/lib/healthlog/device";
 import { DEFAULT_STATE } from "@/lib/healthlog/defaults";
 import { parseQuickLog } from "@/lib/healthlog/parser";
 import { loadRemoteState, saveRemoteState } from "@/lib/healthlog/remote-state";
 import { readState, writeState } from "@/lib/healthlog/store";
-import { formatShortDateTime } from "@/lib/healthlog/time";
 import type { ChatMessage, HealthLogState, LogEntry } from "@/lib/healthlog/types";
 
 function getInitialState(): HealthLogState {
@@ -83,6 +80,20 @@ function buildOpenAiMessages(messages: ChatMessage[]) {
     }));
 }
 
+function formatAiStamp(dateIso: string, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(new Date(dateIso));
+
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${map.day}/${map.month} ${map.hour}:${map.minute}`;
+}
+
 export function ChatWorkspace() {
   const [state, setState] = useState<HealthLogState>(() => getInitialState());
   const [input, setInput] = useState("");
@@ -93,7 +104,6 @@ export function ChatWorkspace() {
   );
   const deviceIdRef = useRef<string | null>(null);
   const lastSavedJsonRef = useRef<string>("");
-  const proactiveInFlightRef = useRef(false);
 
   if (deviceIdRef.current === null) {
     deviceIdRef.current = getOrCreateDeviceId();
@@ -192,45 +202,6 @@ export function ChatWorkspace() {
   }, [state.ai.unreadAssistantCount, state.messages.length]);
 
   useEffect(() => {
-    if (!hydrated || !state.ai.active || state.ai.lastUserActionAt || !aiReady) {
-      return;
-    }
-
-    updateState((current) => ({
-      ...current,
-      ai: markAiUserAction(current.ai)
-    }));
-  }, [aiReady, hydrated, state.ai.active, state.ai.lastUserActionAt]);
-
-  useEffect(() => {
-    if (!hydrated || !aiReady || !state.ai.active || busy || proactiveInFlightRef.current) {
-      return;
-    }
-
-    if (!state.ai.lastUserActionAt) {
-      return;
-    }
-
-    if (state.ai.lastProactiveAt && state.ai.lastProactiveAt >= state.ai.lastUserActionAt) {
-      return;
-    }
-
-    proactiveInFlightRef.current = true;
-    void sendProactiveCoachCheckIn()
-      .finally(() => {
-        proactiveInFlightRef.current = false;
-      });
-  }, [
-    aiReady,
-    busy,
-    hydrated,
-    state.ai.active,
-    state.ai.lastProactiveAt,
-    state.ai.lastUserActionAt,
-    state.logs.length
-  ]);
-
-  useEffect(() => {
     function syncReadState() {
       if (document.visibilityState !== "visible") {
         return;
@@ -267,8 +238,7 @@ export function ChatWorkspace() {
       ...current,
       ai: {
         ...current.ai,
-        active,
-        lastUserActionAt: active ? new Date().toISOString() : current.ai.lastUserActionAt
+        active
       }
     }));
     setStatus(active ? "AI is active." : "AI is off by default.");
@@ -333,51 +303,6 @@ export function ChatWorkspace() {
     }
   }
 
-  async function sendProactiveCoachCheckIn() {
-    setBusy(true);
-    setStatus("Coach check-in...");
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          mode: "coach",
-          active: state.ai.active,
-          messages: buildOpenAiMessages([
-            ...state.messages,
-            createChatMessage(
-              "user",
-              "Generate a proactive coaching check-in. Focus on the single best next action the user should take right now to move toward the goal. Do not greet. Do not ask what the user wants to log. Be direct and useful.",
-              "summary"
-            )
-          ]),
-          state
-        })
-      });
-
-      const payload = (await response.json()) as { status: string; message?: string; detail?: string };
-      const replyText = payload.message;
-      if (!response.ok || payload.status !== "ok" || !replyText) {
-        throw new Error(payload.detail || replyText || "Coach request failed.");
-      }
-
-      const now = new Date();
-      updateState((current) => ({
-        ...current,
-        messages: [...current.messages, createChatMessage("assistant", replyText, "summary", now.toISOString())],
-        ai: markAiProactiveSent(current.ai, now)
-      }));
-      setStatus("Coach check-in sent.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Coach check-in failed.";
-      setStatus(message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function handleSendMessage(mode: "chat" | "summary" = "chat") {
     const trimmed = input.trim();
     if (mode === "chat" && !trimmed) {
@@ -397,8 +322,7 @@ export function ChatWorkspace() {
           ...current.messages,
           userMessage,
           createChatMessage("assistant", logAcknowledgement(parsedLog), parsedLog.status === "complete" ? "log" : "clarification", now.toISOString())
-        ],
-        ai: markAiUserAction(current.ai, now)
+        ]
       }));
       setInput("");
       setStatus(parsedLog.status === "complete" ? "Log saved locally." : "Need clarification before calculating.");
@@ -449,31 +373,24 @@ export function ChatWorkspace() {
           <div className="chat-title">
             <p className="eyebrow">NoesisHealth</p>
           </div>
-          <div className="chat-controls">
-            <label className="chip">
-              <input
-                type="checkbox"
-                checked={state.ai.active}
-                onChange={(event) => toggleAiActive(event.target.checked)}
-              />
-              AI active
-            </label>
-            <button className="button secondary" type="button" onClick={resetDemoData}>
-              Reset
-            </button>
-          </div>
+          <button className="button secondary" type="button" onClick={resetDemoData}>
+            Reset
+          </button>
         </header>
 
         <div className="chat-feed">
-          {messages.map((message) => (
-            <article key={message.id} className={`chat-bubble ${message.role === "user" ? "user" : "ai"}`}>
-              <div className="bubble-head">
-                <strong>{message.role === "user" ? "You" : "AI"}</strong>
-                <span className="small muted">{formatShortDateTime(message.createdAt, state.plan.timezone)}</span>
-              </div>
-              <p>{message.content}</p>
-            </article>
-          ))}
+          {messages.map((message) =>
+            message.role === "user" ? (
+              <article key={message.id} className="chat-bubble user">
+                <p>{message.content}</p>
+              </article>
+            ) : (
+              <article key={message.id} className="chat-line ai">
+                <p>{message.content}</p>
+                <span className="chat-time muted">{formatAiStamp(message.createdAt, state.plan.timezone)}</span>
+              </article>
+            )
+          )}
         </div>
 
         <form
@@ -487,9 +404,23 @@ export function ChatWorkspace() {
             className="textarea"
             placeholder="Type here..."
             value={input}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void handleSendMessage("chat");
+              }
+            }}
             onChange={(event) => setInput(event.target.value)}
           />
           <div className="composer-actions">
+            <button
+              className={`toggle-button ${state.ai.active ? "awake" : "sleeping"}`}
+              type="button"
+              aria-pressed={!state.ai.active}
+              onClick={() => toggleAiActive(!state.ai.active)}
+            >
+              <span className="toggle-title">Zzz..</span>
+            </button>
             <button className="button" type="submit" disabled={busy}>
               Send
             </button>

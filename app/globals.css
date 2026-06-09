@@ -124,7 +124,7 @@ textarea {
   border-radius: 28px;
   background: var(--surface);
   backdrop-filter: blur(18px);
-  box-shadow: var(--shadow);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
 }
 
 .chat-title {
@@ -152,18 +152,33 @@ textarea {
   width: min(88%, 680px);
   border-radius: 22px;
   padding: 14px 16px;
-  border: 1px solid var(--border);
-  background: rgba(18, 26, 31, 0.88);
+  border: 1px solid rgba(164, 185, 194, 0.1);
+  background: rgba(18, 26, 31, 0.78);
 }
 
 .chat-bubble.user {
   margin-left: auto;
-  background: linear-gradient(180deg, rgba(56, 189, 248, 0.12), rgba(18, 26, 31, 0.9));
+  background: linear-gradient(180deg, rgba(56, 189, 248, 0.08), rgba(18, 26, 31, 0.82));
+  border-color: rgba(196, 214, 222, 0.16);
 }
 
-.chat-bubble.ai {
+.chat-line.ai {
+  width: min(88%, 680px);
   margin-right: auto;
-  background: linear-gradient(180deg, rgba(125, 211, 252, 0.1), rgba(18, 26, 31, 0.9));
+  padding: 0 4px 0 6px;
+  border-left: 1px solid rgba(164, 185, 194, 0.12);
+}
+
+.chat-line.ai p {
+  margin: 8px 0 0;
+  color: var(--text);
+}
+
+.chat-time {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
 }
 
 .chat-footer {
@@ -192,6 +207,9 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
 }
 
 .chip {
@@ -303,7 +321,7 @@ textarea {
   border: 0;
   border-radius: 999px;
   padding: 12px 16px;
-  background: var(--accent);
+  background: rgba(125, 211, 252, 0.12);
   color: white;
   cursor: pointer;
   transition:
@@ -313,7 +331,7 @@ textarea {
 
 .button:hover {
   transform: translateY(-1px);
-  background: var(--accent-strong);
+  background: rgba(125, 211, 252, 0.18);
 }
 
 .button.secondary {
@@ -323,6 +341,49 @@ textarea {
 
 .button.secondary:hover {
   background: rgba(255, 255, 255, 0.1);
+}
+
+.toggle-button {
+  min-width: 140px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  border: 1px solid rgba(164, 185, 194, 0.16);
+  border-radius: 18px;
+  padding: 11px 14px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+  transition:
+    transform 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease,
+    border-color 120ms ease;
+}
+
+.toggle-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(196, 214, 222, 0.24);
+}
+
+.toggle-button.awake {
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.22);
+}
+
+.toggle-button.sleeping {
+  background: rgba(18, 26, 31, 0.98);
+  border-color: rgba(196, 214, 222, 0.1);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35);
+  transform: translateY(1px);
+}
+
+.toggle-title {
+  font-size: 0.96rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
 }
 
 .button:disabled {
