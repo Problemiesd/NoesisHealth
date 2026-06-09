@@ -80,20 +80,6 @@ function buildOpenAiMessages(messages: ChatMessage[]) {
     }));
 }
 
-function formatAiStamp(dateIso: string, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(new Date(dateIso));
-
-  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${map.day}/${map.month} ${map.hour}:${map.minute}`;
-}
-
 export function ChatWorkspace() {
   const [state, setState] = useState<HealthLogState>(() => getInitialState());
   const [input, setInput] = useState("");
@@ -373,7 +359,7 @@ export function ChatWorkspace() {
           <div className="chat-title">
             <p className="eyebrow">NoesisHealth</p>
           </div>
-          <button className="button secondary" type="button" onClick={resetDemoData}>
+          <button className="reset-link" type="button" onClick={resetDemoData}>
             Reset
           </button>
         </header>
@@ -387,7 +373,6 @@ export function ChatWorkspace() {
             ) : (
               <article key={message.id} className="chat-line ai">
                 <p>{message.content}</p>
-                <span className="chat-time muted">{formatAiStamp(message.createdAt, state.plan.timezone)}</span>
               </article>
             )
           )}

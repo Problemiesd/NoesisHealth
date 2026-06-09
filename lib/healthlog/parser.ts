@@ -274,6 +274,10 @@ function parseSupplementEntry(rawText: string, loggedAt: string): LogEntry | nul
   };
 }
 
+function hasNoteCue(text: string): boolean {
+  return /(^|\s)(note|memo|remember|reminder|จด|บันทึก|บันทึกโน้ต|เก็บไว้)(\s|$)|^(note|memo)\s*:/i.test(text);
+}
+
 function parseNoteEntry(rawText: string, loggedAt: string): LogEntry {
   return {
     id: crypto.randomUUID(),
@@ -305,6 +309,10 @@ function parseUnknownEntry(rawText: string, loggedAt: string): LogEntry {
 
 export function parseQuickLog(rawText: string, loggedAt = createIsoNow()): LogEntry {
   const text = normalizeText(rawText);
+
+  if (hasNoteCue(text)) {
+    return parseNoteEntry(rawText, loggedAt);
+  }
 
   const sleep = parseSleepEntry(rawText, loggedAt);
   if (sleep) {
@@ -372,7 +380,7 @@ export function parseQuickLog(rawText: string, loggedAt = createIsoNow()): LogEn
     return parseUnknownEntry(rawText, loggedAt);
   }
 
-  return parseNoteEntry(rawText, loggedAt);
+  return parseUnknownEntry(rawText, loggedAt);
 }
 
 export function getCategoryLabel(category: LogCategory): string {

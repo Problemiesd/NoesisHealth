@@ -37,4 +37,18 @@ describe("parseQuickLog", () => {
     expect(log.status).toBe("complete");
     expect(log.details.durationHours).toBe(7);
   });
+
+  it("does not store generic chat as a note by default", () => {
+    const log = parseQuickLog("ขอแป๊บนึง", "2026-06-10T02:00:00.000Z");
+
+    expect(log.category).toBe("unknown");
+    expect(log.status).toBe("incomplete");
+  });
+
+  it("stores explicit note cues as notes", () => {
+    const log = parseQuickLog("note: พรุ่งนี้ชั่งน้ำหนัก", "2026-06-10T02:00:00.000Z");
+
+    expect(log.category).toBe("note");
+    expect(log.status).toBe("complete");
+  });
 });
