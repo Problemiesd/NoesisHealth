@@ -70,6 +70,7 @@ export interface AiControlState {
   cooldownMinutes: number;
   lastAssistantAt?: string;
   lastReadAt?: string;
+  lastProactiveAt?: string;
   unreadAssistantCount: number;
 }
 
@@ -93,6 +94,7 @@ export interface DailySummary {
   totalCalories: Trace<number>;
   totalProteinG: Trace<number>;
   sleepHours: Trace<number>;
+  exerciseMinutes: Trace<number>;
   supplementsTaken: Trace<string[]>;
   latestWeightKg: Trace<number | null>;
   incompleteLogs: LogEntry[];

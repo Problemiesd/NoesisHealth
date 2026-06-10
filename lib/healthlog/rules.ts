@@ -20,6 +20,9 @@ export function summarizeHealthLogs(
   const completeSleepLogs = todayLogs.filter(
     (log) => log.category === "sleep" && log.status === "complete"
   );
+  const completeExerciseLogs = todayLogs.filter(
+    (log) => log.category === "exercise" && log.status === "complete"
+  );
   const completeSupplementLogs = todayLogs.filter(
     (log) => log.category === "supplement" && log.status === "complete"
   );
@@ -34,6 +37,10 @@ export function summarizeHealthLogs(
     return sum + protein;
   }, 0);
   const sleepHours = completeSleepLogs.reduce((sum, log) => {
+    const value = typeof log.trace.value === "number" ? log.trace.value : 0;
+    return sum + value;
+  }, 0);
+  const exerciseMinutes = completeExerciseLogs.reduce((sum, log) => {
     const value = typeof log.trace.value === "number" ? log.trace.value : 0;
     return sum + value;
   }, 0);
@@ -126,6 +133,13 @@ export function summarizeHealthLogs(
       based_on: completeSleepLogs.map((log) => `log:${log.id}`),
       missing_fields: completeSleepLogs.length === 0 ? ["sleep"] : [],
       assumptions: ["Only deterministic sleep entries were counted."]
+    },
+    exerciseMinutes: {
+      value: Number(exerciseMinutes.toFixed(2)),
+      unit: "minutes",
+      based_on: completeExerciseLogs.map((log) => `log:${log.id}`),
+      missing_fields: completeExerciseLogs.length === 0 ? ["exercise"] : [],
+      assumptions: ["Only deterministic exercise entries were counted."]
     },
     supplementsTaken: {
       value: supplementsTaken,

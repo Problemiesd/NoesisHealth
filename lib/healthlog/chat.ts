@@ -55,6 +55,38 @@ export function canSendAiReply(
   return { allowed: true };
 }
 
+export function canSendProactiveTalk(
+  ai: AiControlState,
+  now = new Date()
+): { allowed: boolean; reason?: string } {
+  if (!ai.active) {
+    return { allowed: false, reason: "AI chat is inactive." };
+  }
+
+  if (ai.unreadAssistantCount > 0) {
+    return { allowed: false, reason: "Waiting for the last AI reply to be read." };
+  }
+
+  const lastProactiveAt = ai.lastProactiveAt ? new Date(ai.lastProactiveAt).getTime() : null;
+  const lastAssistantAt = ai.lastAssistantAt ? new Date(ai.lastAssistantAt).getTime() : null;
+  const lastTriggeredAt = Math.max(lastProactiveAt ?? 0, lastAssistantAt ?? 0);
+
+  if (!lastTriggeredAt) {
+    return { allowed: true };
+  }
+
+  const cooldownMs = ai.cooldownMinutes * 60 * 1000;
+  const nextAllowedAt = lastTriggeredAt + cooldownMs;
+  if (now.getTime() < nextAllowedAt) {
+    return {
+      allowed: false,
+      reason: `Please wait until ${new Date(nextAllowedAt).toISOString()} before proactive coaching again.`
+    };
+  }
+
+  return { allowed: true };
+}
+
 export function markAiReplyRead(ai: AiControlState, now = new Date()): AiControlState {
   return {
     ...ai,
@@ -68,6 +100,13 @@ export function markAiReplySent(ai: AiControlState, now = new Date()): AiControl
     ...ai,
     lastAssistantAt: now.toISOString(),
     unreadAssistantCount: ai.unreadAssistantCount + 1
+  };
+}
+
+export function markProactiveTalkSent(ai: AiControlState, now = new Date()): AiControlState {
+  return {
+    ...ai,
+    lastProactiveAt: now.toISOString()
   };
 }
 
