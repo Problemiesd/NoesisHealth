@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  canSendAiReply,
   createChatMessage,
   isOpenAiChatEnabled,
   markAiReplyRead,
@@ -10,10 +9,23 @@ import {
 } from "@/lib/healthlog/chat";
 import { getOrCreateDeviceId } from "@/lib/healthlog/device";
 import { DEFAULT_STATE } from "@/lib/healthlog/defaults";
-import { parseQuickLog } from "@/lib/healthlog/parser";
 import { loadRemoteState, saveRemoteState } from "@/lib/healthlog/remote-state";
 import { readState, writeState } from "@/lib/healthlog/store";
 import type { ChatMessage, HealthLogState, LogEntry } from "@/lib/healthlog/types";
+
+type AiChatDecision = {
+  action: "reply" | "save_log" | "reply_and_save";
+  message: string;
+  log?: Partial<LogEntry> & {
+    category?: LogEntry["category"];
+    status?: LogEntry["status"];
+    createdAt?: string;
+    loggedAt?: string;
+    clarificationQuestion?: string;
+    trace?: LogEntry["trace"];
+    details?: Record<string, unknown>;
+  };
+};
 
 function getInitialState(): HealthLogState {
   return readState();
@@ -21,53 +33,6 @@ function getInitialState(): HealthLogState {
 
 function sortLogsDescending(logs: LogEntry[]): LogEntry[] {
   return [...logs].sort((a, b) => b.loggedAt.localeCompare(a.loggedAt));
-}
-
-function isQuestionLike(text: string): boolean {
-  return /\?/.test(text) || /(why|how|what|when|which|แนะนำ|อะไร|ทำไม|ยังไง|เท่าไร|ไหม|หรือ)/i.test(text);
-}
-
-function isLogLike(entry: LogEntry, rawText: string): boolean {
-  if (isQuestionLike(rawText)) {
-    return false;
-  }
-
-  if (entry.category === "food" || entry.category === "sleep" || entry.category === "supplement" || entry.category === "weight" || entry.category === "exercise") {
-    return true;
-  }
-
-  if (entry.category === "note" || entry.category === "unknown") {
-    return !isQuestionLike(rawText);
-  }
-
-  return false;
-}
-
-function logAcknowledgement(entry: LogEntry): string {
-  if (entry.status === "incomplete" && entry.clarificationQuestion) {
-    return entry.clarificationQuestion;
-  }
-
-  switch (entry.category) {
-    case "food": {
-      const calories = entry.details.calories as number | undefined;
-      const proteinG = entry.details.proteinG as number | undefined;
-      const foodLabel = String(entry.details.foodLabel ?? entry.details.foodKey ?? "food");
-      return `บันทึก ${foodLabel} แล้ว${typeof calories === "number" ? `: ${calories} kcal` : ""}${typeof proteinG === "number" ? `, โปรตีน ${proteinG} g` : ""}.`;
-    }
-    case "sleep":
-      return `บันทึกการนอนแล้ว${typeof entry.details.durationHours === "number" ? `: ${entry.details.durationHours} ชั่วโมง` : ""}.`;
-    case "supplement":
-      return `บันทึก supplement แล้ว: ${String(entry.details.supplementName ?? "item")}.`;
-    case "weight":
-      return `บันทึกน้ำหนักแล้ว: ${String(entry.details.weightKg ?? entry.trace.value)} kg.`;
-    case "exercise":
-      return `บันทึกการออกกำลังกายแล้ว${typeof entry.details.minutes === "number" ? `: ${entry.details.minutes} นาที` : ""}.`;
-    case "note":
-      return "บันทึกโน้ตแล้ว.";
-    default:
-      return "บันทึกแล้ว.";
-  }
 }
 
 function buildOpenAiMessages(messages: ChatMessage[]) {
@@ -80,6 +45,124 @@ function buildOpenAiMessages(messages: ChatMessage[]) {
     }));
 }
 
+function extractDecisionJson(rawText: string): string | null {
+  const fenced = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced?.[1]) {
+    return fenced[1].trim();
+  }
+
+  const trimmed = rawText.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    return trimmed;
+  }
+
+  return null;
+}
+
+function normalizeDecision(rawText: string): AiChatDecision {
+  const jsonText = extractDecisionJson(rawText);
+  if (!jsonText) {
+    return {
+      action: "reply",
+      message: rawText.trim()
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(jsonText) as Partial<AiChatDecision>;
+    if (
+      typeof parsed.message !== "string" ||
+      !parsed.message.trim() ||
+      (parsed.action !== "reply" && parsed.action !== "save_log" && parsed.action !== "reply_and_save")
+    ) {
+      return {
+        action: "reply",
+        message: rawText.trim()
+      };
+    }
+
+    return {
+      action: parsed.action,
+      message: parsed.message.trim(),
+      log: parsed.log
+    };
+  } catch {
+    return {
+      action: "reply",
+      message: rawText.trim()
+    };
+  }
+}
+
+function hydrateAiLogEntry(log: AiChatDecision["log"], fallbackText: string, loggedAt: string): LogEntry | null {
+  if (!log) {
+    return null;
+  }
+
+  const category = log.category ?? "note";
+  const status = log.status ?? "complete";
+  const rawText = typeof log.rawText === "string" && log.rawText.trim() ? log.rawText.trim() : fallbackText;
+
+  if (
+    category !== "food" &&
+    category !== "sleep" &&
+    category !== "supplement" &&
+    category !== "weight" &&
+    category !== "exercise" &&
+    category !== "note" &&
+    category !== "unknown"
+  ) {
+    return null;
+  }
+
+  if (status !== "complete" && status !== "incomplete") {
+    return null;
+  }
+
+  return {
+    id: crypto.randomUUID(),
+    rawText,
+    category,
+    status,
+    createdAt:
+      typeof log.createdAt === "string" && log.createdAt.trim() ? log.createdAt : loggedAt,
+    loggedAt:
+      typeof log.loggedAt === "string" && log.loggedAt.trim() ? log.loggedAt : loggedAt,
+    clarificationQuestion:
+      typeof log.clarificationQuestion === "string" && log.clarificationQuestion.trim()
+        ? log.clarificationQuestion.trim()
+        : undefined,
+    trace:
+      log.trace ??
+      ({
+        value: null,
+        unit: "text",
+        based_on: [],
+        missing_fields: [],
+        assumptions: []
+      } as LogEntry["trace"]),
+    details: log.details && typeof log.details === "object" ? log.details : {}
+  };
+}
+
+function appendAssistantReply(
+  current: HealthLogState,
+  assistantText: string,
+  kind: ChatMessage["kind"],
+  nowIso: string,
+  savedLog: LogEntry | null
+): HealthLogState {
+  return {
+    ...current,
+    logs: savedLog ? sortLogsDescending([savedLog, ...current.logs]) : current.logs,
+    messages: [
+      ...current.messages,
+      createChatMessage("assistant", assistantText, kind, nowIso)
+    ],
+    ai: markAiReplySent(current.ai, new Date(nowIso))
+  };
+}
+
 export function ChatWorkspace() {
   const [state, setState] = useState<HealthLogState>(() => getInitialState());
   const [input, setInput] = useState("");
@@ -90,14 +173,17 @@ export function ChatWorkspace() {
   );
   const deviceIdRef = useRef<string | null>(null);
   const lastSavedJsonRef = useRef<string>("");
+  const chatFeedRef = useRef<HTMLDivElement | null>(null);
 
   if (deviceIdRef.current === null) {
     deviceIdRef.current = getOrCreateDeviceId();
   }
 
   const aiReady = isOpenAiChatEnabled();
-  const aiAllowance = canSendAiReply(state.ai, new Date());
-  const messages = useMemo(() => [...state.messages].sort((a, b) => a.createdAt.localeCompare(b.createdAt)), [state.messages]);
+  const messages = useMemo(
+    () => [...state.messages].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    [state.messages]
+  );
 
   useEffect(() => {
     writeState(state);
@@ -143,7 +229,6 @@ export function ChatWorkspace() {
     return () => {
       cancelled = true;
     };
-    // Hydrate once on mount.
   }, []);
 
   useEffect(() => {
@@ -175,6 +260,18 @@ export function ChatWorkspace() {
       window.clearTimeout(timeoutId);
     };
   }, [hydrated, state]);
+
+  useEffect(() => {
+    const feed = chatFeedRef.current;
+    if (!feed) {
+      return;
+    }
+
+    feed.scrollTo({
+      top: feed.scrollHeight,
+      behavior: "smooth"
+    });
+  }, [messages.length, busy]);
 
   useEffect(() => {
     if (document.visibilityState !== "visible" || state.ai.unreadAssistantCount === 0) {
@@ -236,9 +333,10 @@ export function ChatWorkspace() {
     setStatus("Reset demo data.");
   }
 
-  async function sendToOpenAi(mode: "chat" | "summary", userPrompt: string) {
+  async function sendToOpenAi(mode: "chat" | "summary", conversationMessages: ChatMessage[], userPrompt: string) {
     setBusy(true);
     setStatus("Calling OpenAI...");
+
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
@@ -248,10 +346,7 @@ export function ChatWorkspace() {
         body: JSON.stringify({
           mode,
           active: state.ai.active,
-          messages: buildOpenAiMessages([
-            ...state.messages,
-            createChatMessage("user", userPrompt, mode === "summary" ? "summary" : "chat")
-          ]),
+          messages: buildOpenAiMessages(conversationMessages),
           state
         })
       });
@@ -262,24 +357,24 @@ export function ChatWorkspace() {
         throw new Error(payload.detail || replyText || "OpenAI request failed.");
       }
 
-      const now = new Date();
-      updateState((current) => ({
-        ...current,
-        messages: [
-          ...current.messages,
-          createChatMessage("user", userPrompt, mode === "summary" ? "summary" : "chat", now.toISOString()),
-          createChatMessage("assistant", replyText, mode === "summary" ? "summary" : "chat", now.toISOString())
-        ],
-        ai: markAiReplySent(current.ai, now)
-      }));
-      setStatus("AI replied.");
+      const decision = normalizeDecision(replyText);
+      const nowIso = new Date().toISOString();
+      const savedLog =
+        decision?.action && decision.action !== "reply"
+          ? hydrateAiLogEntry(decision.log, userPrompt, nowIso)
+          : null;
+      const assistantText = decision?.message?.trim() ? decision.message.trim() : replyText.trim();
+      const assistantKind: ChatMessage["kind"] =
+        savedLog && savedLog.status === "incomplete" ? "clarification" : savedLog ? "log" : "chat";
+
+      updateState((current) => appendAssistantReply(current, assistantText, assistantKind, nowIso, savedLog));
+      setStatus(savedLog ? "AI replied and saved a log." : "AI replied.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "OpenAI failed.";
       updateState((current) => ({
         ...current,
         messages: [
           ...current.messages,
-          createChatMessage("user", userPrompt, mode === "summary" ? "summary" : "chat"),
           createChatMessage("assistant", `AI error: ${message}`, "system")
         ]
       }));
@@ -295,37 +390,24 @@ export function ChatWorkspace() {
       return;
     }
 
-    const now = new Date();
-    const userMessage = createChatMessage("user", trimmed, "chat", now.toISOString());
-    const parsedLog = parseQuickLog(trimmed, now.toISOString());
-    const logLike = isLogLike(parsedLog, trimmed);
+    const nowIso = new Date().toISOString();
+    const userMessage = createChatMessage("user", trimmed, "chat", nowIso);
 
-    if (logLike) {
-      updateState((current) => ({
-        ...current,
-        logs: sortLogsDescending([parsedLog, ...current.logs]),
-        messages: [
-          ...current.messages,
-          userMessage,
-          createChatMessage("assistant", logAcknowledgement(parsedLog), parsedLog.status === "complete" ? "log" : "clarification", now.toISOString())
-        ]
-      }));
-      setInput("");
-      setStatus(parsedLog.status === "complete" ? "Log saved locally." : "Need clarification before calculating.");
-      return;
-    }
+    updateState((current) => ({
+      ...current,
+      messages: [...current.messages, userMessage]
+    }));
 
     if (!state.ai.active || !aiReady) {
       updateState((current) => ({
         ...current,
         messages: [
           ...current.messages,
-          userMessage,
           createChatMessage(
             "assistant",
-            "OpenAI chat is off. Turn it on to ask questions, or type a log like 'กินไข่ 3 ฟอง'.",
+            "OpenAI chat is off. Turn it on to ask questions.",
             "system",
-            now.toISOString()
+            nowIso
           )
         ]
       }));
@@ -334,21 +416,8 @@ export function ChatWorkspace() {
       return;
     }
 
-    if (!aiAllowance.allowed) {
-      updateState((current) => ({
-        ...current,
-        messages: [
-          ...current.messages,
-          userMessage,
-          createChatMessage("assistant", aiAllowance.reason ?? "Please wait before asking again.", "clarification", now.toISOString())
-        ]
-      }));
-      setInput("");
-      setStatus(aiAllowance.reason ?? "AI cooldown active.");
-      return;
-    }
-
-    await sendToOpenAi("chat", trimmed);
+    const conversationMessages = [...messages, userMessage];
+    await sendToOpenAi(mode, conversationMessages, trimmed);
     setInput("");
   }
 
@@ -364,7 +433,7 @@ export function ChatWorkspace() {
           </button>
         </header>
 
-        <div className="chat-feed">
+        <div className="chat-feed" ref={chatFeedRef}>
           {messages.map((message) =>
             message.role === "user" ? (
               <article key={message.id} className="chat-bubble user">
