@@ -166,7 +166,8 @@ textarea {
 }
 
 .chat-feed {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   min-height: 56vh;
   max-height: 66vh;
@@ -183,7 +184,7 @@ textarea {
 }
 
 .chat-bubble.user {
-  margin-left: auto;
+  align-self: flex-end;
   width: fit-content;
   max-width: 50%;
   background: linear-gradient(180deg, rgba(56, 189, 248, 0.08), rgba(18, 26, 31, 0.82));
@@ -463,6 +464,6 @@ textarea {
   }
 
   .chat-bubble.user {
-    max-width: 88%;
+    max-width: 82%;
   }
 }
