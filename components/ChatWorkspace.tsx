@@ -3,13 +3,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createChatMessage,
+  canSendProactiveTalk,
   isOpenAiChatEnabled,
   markAiReplyRead,
-  markAiReplySent
+  markAiReplySent,
+  markProactiveTalkSent
 } from "@/lib/healthlog/chat";
 import { getOrCreateDeviceId } from "@/lib/healthlog/device";
 import { DEFAULT_STATE } from "@/lib/healthlog/defaults";
 import { loadRemoteState, saveRemoteState } from "@/lib/healthlog/remote-state";
+import { summarizeHealthLogs } from "@/lib/healthlog/rules";
 import { readState, writeState } from "@/lib/healthlog/store";
 import type { ChatMessage, HealthLogState, LogEntry } from "@/lib/healthlog/types";
 
@@ -33,6 +36,20 @@ function getInitialState(): HealthLogState {
 
 function sortLogsDescending(logs: LogEntry[]): LogEntry[] {
   return [...logs].sort((a, b) => b.loggedAt.localeCompare(a.loggedAt));
+}
+
+function formatAiStamp(dateIso: string, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(new Date(dateIso));
+
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${map.day}/${map.month} ${map.hour}:${map.minute}`;
 }
 
 function buildOpenAiMessages(messages: ChatMessage[]) {
@@ -150,7 +167,8 @@ function appendAssistantReply(
   assistantText: string,
   kind: ChatMessage["kind"],
   nowIso: string,
-  savedLog: LogEntry | null
+  savedLog: LogEntry | null,
+  proactive = false
 ): HealthLogState {
   return {
     ...current,
@@ -159,7 +177,9 @@ function appendAssistantReply(
       ...current.messages,
       createChatMessage("assistant", assistantText, kind, nowIso)
     ],
-    ai: markAiReplySent(current.ai, new Date(nowIso))
+    ai: proactive
+      ? markAiReplySent(markProactiveTalkSent(current.ai, new Date(nowIso)), new Date(nowIso))
+      : markAiReplySent(current.ai, new Date(nowIso))
   };
 }
 
@@ -184,6 +204,7 @@ export function ChatWorkspace() {
     () => [...state.messages].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
     [state.messages]
   );
+  const summary = useMemo(() => summarizeHealthLogs(state), [state]);
 
   useEffect(() => {
     writeState(state);
@@ -274,6 +295,71 @@ export function ChatWorkspace() {
   }, [messages.length, busy]);
 
   useEffect(() => {
+    if (!hydrated || busy || !state.ai.active || !aiReady) {
+      return;
+    }
+
+    const now = new Date();
+    const proactiveAllowance = canSendProactiveTalk(state.ai, now);
+    if (!proactiveAllowance.allowed) {
+      return;
+    }
+
+    const calorieGapKcal = Math.max(0, state.plan.dailyUseKcal - summary.totalCalories.value);
+    const proteinGapG = Math.max(0, state.plan.dailyProteinTargetG - summary.totalProteinG.value);
+    const exerciseMinutes = summary.exerciseMinutes.value;
+    const meaningfulGap =
+      calorieGapKcal >= 200 ||
+      proteinGapG >= 20 ||
+      exerciseMinutes < 10 ||
+      summary.incompleteLogs.some((log) => log.category === "food");
+
+    if (!meaningfulGap) {
+      return;
+    }
+
+    const delayId = window.setTimeout(() => {
+      if (!canSendProactiveTalk(state.ai, new Date()).allowed) {
+        return;
+      }
+
+      void sendToOpenAi(
+        "chat",
+        [
+          ...messages,
+          createChatMessage(
+            "user",
+            "Proactive coach check: the user did not ask a question. Give one concrete action that best improves calorie deficit today. Mention the calorie gap first if relevant. Do not ask to log anything unless the reply truly needs missing data.",
+            "chat",
+            new Date().toISOString()
+          )
+        ],
+        "Proactive coach check",
+        true
+      );
+    }, 1200);
+
+    return () => {
+      window.clearTimeout(delayId);
+    };
+  }, [
+    hydrated,
+    busy,
+    state.ai.active,
+    aiReady,
+    state.ai.lastAssistantAt,
+    state.ai.lastReadAt,
+    state.ai.unreadAssistantCount,
+    state.plan.dailyUseKcal,
+    state.plan.dailyProteinTargetG,
+    summary.totalCalories.value,
+    summary.totalProteinG.value,
+    summary.exerciseMinutes.value,
+    summary.incompleteLogs.length,
+    messages
+  ]);
+
+  useEffect(() => {
     if (document.visibilityState !== "visible" || state.ai.unreadAssistantCount === 0) {
       return;
     }
@@ -333,7 +419,12 @@ export function ChatWorkspace() {
     setStatus("Reset demo data.");
   }
 
-  async function sendToOpenAi(mode: "chat" | "summary", conversationMessages: ChatMessage[], userPrompt: string) {
+  async function sendToOpenAi(
+    mode: "chat" | "summary",
+    conversationMessages: ChatMessage[],
+    userPrompt: string,
+    proactive = false
+  ) {
     setBusy(true);
     setStatus("Calling OpenAI...");
 
@@ -367,7 +458,9 @@ export function ChatWorkspace() {
       const assistantKind: ChatMessage["kind"] =
         savedLog && savedLog.status === "incomplete" ? "clarification" : savedLog ? "log" : "chat";
 
-      updateState((current) => appendAssistantReply(current, assistantText, assistantKind, nowIso, savedLog));
+      updateState((current) =>
+        appendAssistantReply(current, assistantText, assistantKind, nowIso, savedLog, proactive)
+      );
       setStatus(savedLog ? "AI replied and saved a log." : "AI replied.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "OpenAI failed.";
@@ -442,6 +535,7 @@ export function ChatWorkspace() {
             ) : (
               <article key={message.id} className="chat-line ai">
                 <p>{message.content}</p>
+                <span className="chat-time muted">{formatAiStamp(message.createdAt, state.plan.timezone)}</span>
               </article>
             )
           )}
